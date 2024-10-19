@@ -26,6 +26,27 @@ const (
 	Failed
 )
 
+var stateTransitionMap = map[State][]State{
+	Pending:   {Scheduled},
+	Scheduled: {Scheduled, Running, Failed},
+	Running:   {Running, Completed, Failed},
+	Completed: {},
+	Failed:    {},
+}
+
+func Contains(states []State, state State) bool {
+	for _, s := range states {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidStateTransitions(src State, dest State) bool {
+	return Contains(stateTransitionMap[src], dest)
+}
+
 // since this is a basic implementation of a container orchestrator
 // task here only contains the image name, the uuid, and the state
 // to find the best worker in our cluster for the application we check this by viewing memory and disk
@@ -33,6 +54,7 @@ const (
 // start-time and end-time looks cool to show in the CLI
 type Task struct {
 	ID            uuid.UUID
+	ContainerID   string
 	Name          string
 	State         State
 	Image         string
@@ -89,7 +111,7 @@ func (d *Docker) Run() DockerResult {
 		ctx, d.Config.Image, image.PullOptions{},
 	)
 	if err != nil {
-		log.Printf("Error in pulling the image %s: %v\n", d.Config, err)
+		log.Printf("Error in pulling the image %v: %v\n", d.Config, err)
 		return DockerResult{Error: err}
 	}
 	io.Copy(os.Stdout, reader)
@@ -117,12 +139,12 @@ func (d *Docker) Run() DockerResult {
 		ctx, &cc, &hc, nil, nil, d.Config.Name,
 	)
 	if err != nil {
-		log.Printf("Error in creating container %s: %v", d.Config, err)
+		log.Printf("Error in creating container %v: %v", d.Config, err)
 		return DockerResult{Error: err}
 	}
 
 	if err := d.Client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		log.Printf("Error in starting the container %s: %v", d.Config, err)
+		log.Printf("Error in starting the container %v: %v", d.Config, err)
 		return DockerResult{Error: err}
 	}
 
@@ -132,7 +154,7 @@ func (d *Docker) Run() DockerResult {
 		ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true},
 	)
 	if err != nil {
-		log.Printf("Error in getting container logs %s: %v", d.Config, err)
+		log.Printf("Error in getting container logs %v: %v", d.Config, err)
 		return DockerResult{Error: err}
 	}
 	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
@@ -151,14 +173,14 @@ func (d *Docker) Stop(id string) DockerResult {
 	if err := d.Client.ContainerStop(
 		ctx, id, container.StopOptions{},
 	); err != nil {
-		log.Printf("Error in stopping container %s: %v", d.Config, err)
+		log.Printf("Error in stopping container %v: %v", d.Config, err)
 		return DockerResult{Error: err}
 	}
 
 	if err := d.Client.ContainerRemove(
 		ctx, id, container.RemoveOptions{},
 	); err != nil {
-		log.Printf("Error in removing container %s: %v", d.Config, err)
+		log.Printf("Error in removing container %v: %v", d.Config, err)
 		return DockerResult{Error: err}
 	}
 
@@ -167,5 +189,22 @@ func (d *Docker) Stop(id string) DockerResult {
 		Action:      "stop",
 		ContainerID: id,
 		Result:      "success",
+	}
+}
+
+func NewConfig(t *Task) Config {
+	return Config{
+		Name:   t.Name,
+		Image:  t.Image,
+		Memory: int64(t.Memory),
+		Disk:   int64(t.Disk),
+	}
+}
+
+func NewDocker(c Config) *Docker {
+	dc, _ := client.NewClientWithOpts(client.FromEnv)
+	return &Docker{
+		Client: dc,
+		Config: c,
 	}
 }
