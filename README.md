@@ -1,4 +1,4 @@
-# CORE - Container Orchestration for Resource Efficiency
+# CORE - Container Orchestrator for Resource Efficiency
 
 ### Description
 This project aims to build a simple container orchestration tool using Go. Our goal is to learn about Kubernetes and container orchestration in depth. 
