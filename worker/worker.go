@@ -1,11 +1,14 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
 
@@ -103,4 +106,74 @@ func (w *Worker) StopTask(t task.Task) task.DockerResult {
 
 func (w *Worker) AddTask(t task.Task) {
 	w.Queue.Enqueue(t)
+}
+
+func (w *Worker) GetTasks() []task.Task {
+	tasks := make([]task.Task, 0, len(w.DB))
+	for _, t := range w.DB {
+		tasks = append(tasks, *t)
+	}
+
+	return tasks
+}
+
+type API struct {
+	Address string
+	Port    int
+	Worker  *Worker
+	Router  *gin.Engine
+}
+
+func (a *API) StartTask(c *gin.Context) {
+	d := json.NewDecoder(c.Request.Body)
+	d.DisallowUnknownFields()
+
+	te := task.TaskEvent{}
+	if err := d.Decode(&te); err != nil {
+		msg := fmt.Sprintf("error in unmarshalling body: %v", err)
+		log.Println(msg)
+		c.JSON(http.StatusBadRequest, gin.H{"message": msg})
+		return
+	}
+
+	a.Worker.AddTask(te.Task)
+	c.Status(http.StatusCreated)
+}
+
+func (a *API) GetTasks(c *gin.Context) {
+	tasks := a.Worker.GetTasks()
+	if len(tasks) == 0 {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, tasks)
+}
+
+func (a *API) DeleteTask(c *gin.Context) {
+	tID := c.Param("taskID")
+	utID, _ := uuid.Parse(tID)
+
+	_, ok := a.Worker.DB[utID]
+	if !ok {
+		log.Printf("task does not exists, uuid: %v", utID)
+		c.Status(http.StatusNotFound)
+	}
+	taskToStop := a.Worker.DB[utID]
+	taskCopy := *taskToStop
+	taskCopy.State = task.Completed
+	a.Worker.AddTask(taskCopy)
+
+	log.Printf("task with uuid %v has been stopped: %v", utID, taskCopy)
+	c.Status(http.StatusNoContent)
+}
+
+func (a *API) InitRouter() {
+	a.Router.GET("/tasks", a.GetTasks)
+	a.Router.POST("/tasks", a.StartTask)
+	a.Router.DELETE("/tasks/:taskID", a.DeleteTask)
+}
+
+func (a *API) Start() {
+	a.InitRouter()
+	a.Router.Run(fmt.Sprintf("%s:%v", a.Address, a.Port))
 }

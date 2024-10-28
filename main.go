@@ -1,11 +1,11 @@
-//
-
 package main
 
 import (
 	"fmt"
+	"log"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
 
@@ -14,33 +14,37 @@ import (
 )
 
 func main() {
-	db := make(map[uuid.UUID]*task.Task)
+	host := "0.0.0.0"
+	port := 50051
+	fmt.Println("starting core worker")
+
 	w := worker.Worker{
 		Queue: *queue.New(),
-		DB:    db,
+		DB:    make(map[uuid.UUID]*task.Task),
 	}
-	t := task.Task{
-		ID:    uuid.New(),
-		Name:  "task-test",
-		State: task.Scheduled,
-		Image: "strm/helloworld-http",
-	}
-	fmt.Println("starting task")
-	w.AddTask(t)
-	result := w.RunTask()
-	if result.Error != nil {
-		panic(result.Error)
-	}
-	t.ContainerID = result.ContainerID
-	fmt.Printf("task %v is running in container %s\n", t, result)
-	fmt.Println("SLEEP for 30 Seconds")
-	time.Sleep(30 * time.Second)
 
-	fmt.Println("stopping task")
-	t.State = task.Completed
-	w.AddTask(t)
-	result = w.RunTask()
-	if result.Error != nil {
-		panic(result.Error)
+	api := worker.API{
+		Address: host,
+		Port:    port,
+		Worker:  &w,
+		Router:  gin.Default(),
+	}
+
+	go runTasks(&w)
+	api.Start()
+}
+
+func runTasks(w *worker.Worker) {
+	for {
+		if w.Queue.Len() != 0 {
+			result := w.RunTask()
+			if result.Error != nil {
+				log.Printf("error running tasks: %v", result.Error)
+			}
+		} else {
+			log.Println("no tasks in the queue")
+		}
+		log.Println("Sleeping for 5 seconds")
+		time.Sleep(5 * time.Second)
 	}
 }
