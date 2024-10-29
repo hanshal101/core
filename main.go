@@ -31,6 +31,7 @@ func main() {
 	}
 
 	go runTasks(&w)
+	go w.CollectStats()
 	api.Start()
 }
 

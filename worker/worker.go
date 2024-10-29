@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/c9s/goprocinfo/linux"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
@@ -25,10 +26,20 @@ type Worker struct {
 	Queue     queue.Queue
 	DB        map[uuid.UUID]*task.Task
 	TaskCount int
+	Stats     *Stats
 }
 
-func (w *Worker) GetStats() {
-	fmt.Println("This will collect stats from worker")
+// func (w *Worker) GetStats() {
+// 	fmt.Println("This will collect stats from worker")
+// }
+
+func (w *Worker) CollectStats() {
+	for {
+		log.Println("Collecting Stats")
+		w.Stats = GetStats()
+		w.TaskCount = w.Stats.TaskCount
+		time.Sleep(10 * time.Second)
+	}
 }
 
 // this is diff from StartTask
@@ -168,12 +179,125 @@ func (a *API) DeleteTask(c *gin.Context) {
 }
 
 func (a *API) InitRouter() {
+	// tasks
 	a.Router.GET("/tasks", a.GetTasks)
 	a.Router.POST("/tasks", a.StartTask)
 	a.Router.DELETE("/tasks/:taskID", a.DeleteTask)
+
+	// Stats
+	a.Router.GET("/stats", a.GetStatsHandler)
 }
 
 func (a *API) Start() {
 	a.InitRouter()
 	a.Router.Run(fmt.Sprintf("%s:%v", a.Address, a.Port))
+}
+
+func (a *API) GetStatsHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, a.Worker.Stats)
+}
+
+// Worker Metrics
+type Stats struct {
+	CPUStats    *linux.CPUStat
+	MemoryStats *linux.MemInfo
+	DiskStats   *linux.Disk
+	LoadStats   *linux.LoadAvg
+	TaskCount   int
+}
+
+// Memory related information
+func (s *Stats) TotalMemory() uint64 {
+	return s.MemoryStats.MemTotal
+}
+
+func (s *Stats) AvailableMemory() uint64 {
+	return s.MemoryStats.MemAvailable
+}
+
+func (s *Stats) MemoryUsed() uint64 {
+	return s.MemoryStats.MemTotal - s.MemoryStats.MemAvailable
+}
+
+func (s *Stats) MemoryUsedPercentage() uint64 {
+	if s.MemoryStats.MemTotal == 0 {
+		return 0
+	}
+
+	return s.MemoryUsed() / s.TotalMemory() * 100
+}
+
+func GetMemoryInfo() *linux.MemInfo {
+	memstats, err := linux.ReadMemInfo("/proc/meminfo")
+	if err != nil {
+		log.Printf("error in reading form /proc/meminfo, %v", err)
+		return &linux.MemInfo{}
+	}
+
+	return memstats
+}
+
+// Disk related information
+func (s *Stats) DiskTotal() uint64 {
+	return s.DiskStats.All
+}
+
+func (s *Stats) DiskFree() uint64 {
+	return s.DiskStats.Free
+}
+
+func (s *Stats) DiskUsed() uint64 {
+	return s.DiskStats.Used
+}
+
+func GetDiskInfo() *linux.Disk {
+	disk, err := linux.ReadDisk("/")
+	if err != nil {
+		log.Printf("error in reading form / (Disk), %v", err)
+		return &linux.Disk{}
+	}
+	return disk
+}
+
+// CPU related information
+func (s *Stats) CpuUsage() float64 {
+	idle := s.CPUStats.Idle + s.CPUStats.IOWait
+	nonIdle := s.CPUStats.User + s.CPUStats.Nice + s.CPUStats.System
+
+	total := idle + nonIdle
+
+	if total == 0 {
+		return 0.00
+	}
+
+	return (float64(total) - float64(idle)) / float64(total) * 100.0
+}
+
+func GetCPUInfo() *linux.CPUStat {
+	cpu, err := linux.ReadStat("/proc/stat")
+	if err != nil {
+		log.Printf("error in reading form /proc/stat, %v", err)
+		return &linux.CPUStat{}
+	}
+	return &cpu.CPUStatAll
+}
+
+func GetLoadAverage() *linux.LoadAvg {
+	ldavg, err := linux.ReadLoadAvg("/proc/loadavg")
+	if err != nil {
+		log.Printf("error in reading form /proc/meminfo, %v", err)
+		return &linux.LoadAvg{}
+	}
+
+	return ldavg
+}
+
+// Complete Stats
+func GetStats() *Stats {
+	return &Stats{
+		CPUStats:    GetCPUInfo(),
+		MemoryStats: GetMemoryInfo(),
+		DiskStats:   GetDiskInfo(),
+		LoadStats:   GetLoadAverage(),
+	}
 }
