@@ -9,6 +9,7 @@ import (
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
 
+	"github.com/hanshal101/core/manager"
 	"github.com/hanshal101/core/task"
 	"github.com/hanshal101/core/worker"
 )
@@ -32,7 +33,39 @@ func main() {
 
 	go runTasks(&w)
 	go w.CollectStats()
-	api.Start()
+	go api.Start()
+	println("Sleeping")
+	time.Sleep(15 * time.Second)
+
+	workers := []string{fmt.Sprintf("%s:%d", host, port)}
+	m := manager.New(workers)
+	for i := 0; i < 3; i++ {
+		t := task.Task{
+			ID:    uuid.New(),
+			Name:  fmt.Sprintf("test-container-%d", i),
+			Image: "ubuntu:latest",
+		}
+		te := task.TaskEvent{
+			ID:   uuid.New(),
+			Task: t,
+		}
+		m.AddTask(te)
+		m.SendWork()
+	}
+	go func() {
+		for {
+			fmt.Printf("[Manager] :: Updating tasks from %d worker\n", m.LastWorker)
+			m.UpdateTasks()
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
+	for {
+		for _, t := range m.TaskDB {
+			fmt.Printf("[Manager] :: TaskID: %d, State: %d, Task: %v\n", t.ID, t.State, t)
+			time.Sleep(15 * time.Second)
+		}
+	}
 }
 
 func runTasks(w *worker.Worker) {

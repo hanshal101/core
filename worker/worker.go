@@ -29,6 +29,11 @@ type Worker struct {
 	Stats     *Stats
 }
 
+type ErrResponse struct {
+	HTTPStatusCode int
+	Message        string
+}
+
 // func (w *Worker) GetStats() {
 // 	fmt.Println("This will collect stats from worker")
 // }
@@ -143,7 +148,11 @@ func (a *API) StartTask(c *gin.Context) {
 	if err := d.Decode(&te); err != nil {
 		msg := fmt.Sprintf("error in unmarshalling body: %v", err)
 		log.Println(msg)
-		c.JSON(http.StatusBadRequest, gin.H{"message": msg})
+		m := ErrResponse{
+			HTTPStatusCode: http.StatusBadRequest,
+			Message:        msg,
+		}
+		c.JSON(http.StatusBadRequest, m)
 		return
 	}
 
@@ -158,6 +167,27 @@ func (a *API) GetTasks(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, tasks)
+}
+
+func (a *API) GetTasksbyID(c *gin.Context) {
+	tasks := a.Worker.GetTasks()
+	if len(tasks) == 0 {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	tID := c.Param("taskID")
+	taskID, err := uuid.Parse(tID)
+	if err != nil {
+		fmt.Println("Error parsing UUID:", err)
+		return
+	}
+	var t task.Task
+	for _, tk := range tasks {
+		if tk.ID == taskID {
+			t = tk
+		}
+	}
+	c.JSON(http.StatusOK, t)
 }
 
 func (a *API) DeleteTask(c *gin.Context) {
@@ -181,6 +211,7 @@ func (a *API) DeleteTask(c *gin.Context) {
 func (a *API) InitRouter() {
 	// tasks
 	a.Router.GET("/tasks", a.GetTasks)
+	a.Router.GET("/tasks/:taskID", a.GetTasksbyID)
 	a.Router.POST("/tasks", a.StartTask)
 	a.Router.DELETE("/tasks/:taskID", a.DeleteTask)
 
