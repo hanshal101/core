@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,8 +14,12 @@ import (
 )
 
 func main() {
-	host := "0.0.0.0"
-	port := 50051
+	whost := "0.0.0.0"
+	wport := 50051
+
+	mhost := "0.0.0.0"
+	mport := 50050
+
 	fmt.Println("starting core worker")
 
 	w := worker.Worker{
@@ -24,61 +27,64 @@ func main() {
 		DB:    make(map[uuid.UUID]*task.Task),
 	}
 
-	api := worker.API{
-		Address: host,
-		Port:    port,
+	wapi := worker.API{
+		Address: whost,
+		Port:    wport,
 		Worker:  &w,
 		Router:  gin.Default(),
 	}
 
-	go runTasks(&w)
+	go w.RunTasks()
 	go w.CollectStats()
-	go api.Start()
-	println("Sleeping")
-	time.Sleep(15 * time.Second)
+	go wapi.Start()
 
-	workers := []string{fmt.Sprintf("%s:%d", host, port)}
+	fmt.Println("Sleeping for 10 seconds to start the worker api")
+	time.Sleep(10 * time.Second)
+
+	fmt.Println("Starting core manager")
+	workers := []string{fmt.Sprintf("%s:%d", whost, wport)}
 	m := manager.New(workers)
-	for i := 0; i < 3; i++ {
-		t := task.Task{
-			ID:    uuid.New(),
-			Name:  fmt.Sprintf("test-container-%d", i),
-			Image: "ubuntu:latest",
-		}
-		te := task.TaskEvent{
-			ID:   uuid.New(),
-			Task: t,
-		}
-		m.AddTask(te)
-		m.SendWork()
-	}
-	go func() {
-		for {
-			fmt.Printf("[Manager] :: Updating tasks from %d worker\n", m.LastWorker)
-			m.UpdateTasks()
-			time.Sleep(5 * time.Second)
-		}
-	}()
 
-	for {
-		for _, t := range m.TaskDB {
-			fmt.Printf("[Manager] :: TaskID: %d, State: %d, Task: %v\n", t.ID, t.State, t)
-			time.Sleep(15 * time.Second)
-		}
+	mapi := manager.API{
+		Address: mhost,
+		Port:    mport,
+		Manager: m,
+		Router:  gin.Default(),
 	}
-}
 
-func runTasks(w *worker.Worker) {
-	for {
-		if w.Queue.Len() != 0 {
-			result := w.RunTask()
-			if result.Error != nil {
-				log.Printf("error running tasks: %v", result.Error)
-			}
-		} else {
-			log.Println("no tasks in the queue")
-		}
-		log.Println("Sleeping for 5 seconds")
-		time.Sleep(5 * time.Second)
-	}
+	go m.ProcessTasks()
+	go m.UpdateTasks()
+	go m.DoHealthChecks()
+	mapi.Start()
+
+	// println("Sleeping")
+	// time.Sleep(15 * time.Second)
+
+	// for i := 0; i < 3; i++ {
+	// 	t := task.Task{
+	// 		ID:    uuid.New(),
+	// 		Name:  fmt.Sprintf("test-container-%d", i),
+	// 		Image: "ubuntu:latest",
+	// 	}
+	// 	te := task.TaskEvent{
+	// 		ID:   uuid.New(),
+	// 		Task: t,
+	// 	}
+	// 	m.AddTask(te)
+	// 	m.SendWork()
+	// }
+	// go func() {
+	// 	for {
+	// 		fmt.Printf("[Manager] :: Updating tasks from %d worker\n", m.LastWorker)
+	// 		m.UpdateTasks()
+	// 		time.Sleep(5 * time.Second)
+	// 	}
+	// }()
+
+	// for {
+	// 	for _, t := range m.TaskDB {
+	// 		fmt.Printf("[Manager] :: TaskID: %d, State: %d, Task: %v\n", t.ID, t.State, t)
+	// 		time.Sleep(15 * time.Second)
+	// 	}
+	// }
 }

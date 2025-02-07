@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
@@ -61,10 +62,13 @@ type Task struct {
 	Memory        int
 	Disk          int
 	ExposedPorts  nat.PortSet
+	HostPort      nat.PortMap
 	PortBindings  map[string]string
 	RestartPolicy string
 	StartTime     time.Time
 	EndTime       time.Time
+	HealthCheck   string
+	RestartCount  int
 }
 
 // if user wants to stop a task it can do through task-event
@@ -102,6 +106,12 @@ type DockerResult struct {
 	Action      string
 	ContainerID string
 	Result      string
+}
+
+// DockerInspectResponse will be usefull to determine the current state of the application
+type DockerInspectResponse struct {
+	Error     error
+	Container *types.ContainerJSON
 }
 
 // This is similiar to docker run, stop, rm command
@@ -190,6 +200,18 @@ func (d *Docker) Stop(id string) DockerResult {
 		ContainerID: id,
 		Result:      "success",
 	}
+}
+
+// This is the main inspect element
+func (d *Docker) Inspect(containerID string) DockerInspectResponse {
+	dc, _ := client.NewClientWithOpts(client.FromEnv)
+	ctx := context.Background()
+	resp, err := dc.ContainerInspect(ctx, containerID)
+	if err != nil {
+		log.Printf("Error in inspecting container %v : Error: %v", containerID, err)
+		return DockerInspectResponse{Error: err}
+	}
+	return DockerInspectResponse{Container: &resp}
 }
 
 func NewConfig(t *Task) Config {

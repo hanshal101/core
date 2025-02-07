@@ -49,7 +49,22 @@ func (w *Worker) CollectStats() {
 
 // this is diff from StartTask
 // as this is responsible for identifying the task’s current state and then either starting or stopping
-func (w *Worker) RunTask() task.DockerResult {
+func (w *Worker) RunTasks() {
+	for {
+		if w.Queue.Len() != 0 {
+			result := w.runTask()
+			if result.Error != nil {
+				log.Printf("error running tasks: %v", result.Error)
+			}
+		} else {
+			log.Println("no tasks in the queue")
+		}
+		log.Println("Sleeping for 5 seconds")
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func (w *Worker) runTask() task.DockerResult {
 	t := w.Queue.Dequeue()
 	if t == nil {
 		log.Println("No tasks in the queue")
@@ -68,6 +83,7 @@ func (w *Worker) RunTask() task.DockerResult {
 		switch taskQueued.State {
 		case task.Scheduled:
 			result = w.StartTask(taskQueued)
+			taskPersisted.ContainerID = result.ContainerID
 		case task.Completed:
 			result = w.StopTask(taskQueued)
 		default:
@@ -102,6 +118,7 @@ func (w *Worker) StartTask(t task.Task) task.DockerResult {
 }
 
 func (w *Worker) StopTask(t task.Task) task.DockerResult {
+	fmt.Println("cid----------------> ", t.ContainerID)
 	config := task.NewConfig(&t)
 	d := task.NewDocker(config)
 
@@ -131,6 +148,43 @@ func (w *Worker) GetTasks() []task.Task {
 	}
 
 	return tasks
+}
+
+func (w *Worker) InspectTask(t task.Task) task.DockerInspectResponse {
+	config := task.NewConfig(&t)
+	d := task.NewDocker(config)
+	return d.Inspect(t.ContainerID)
+}
+
+func (w *Worker) UpdateTasks() {
+	for {
+		log.Println("Checking tasks for updates from workers!")
+		w.updateTasks()
+		log.Println("Tasks updates completed!")
+		log.Println("Sleeping for 15 seconds!")
+		time.Sleep(15 * time.Second)
+	}
+}
+
+func (w *Worker) updateTasks() {
+	for id, t := range w.DB {
+		if t.State == task.Running {
+			resp := w.InspectTask(*t)
+			if resp.Error != nil {
+				log.Printf("Error: %v\n", resp.Error)
+			}
+			if resp.Container == nil {
+				log.Printf("No container found for running state")
+				w.DB[id].State = task.Failed
+			}
+			if resp.Container.State.Status == "exited" {
+				log.Printf("Container for task %v is exited", resp.Container)
+				w.DB[id].State = task.Failed
+			}
+			fmt.Println("hp----------------> ", resp.Container.NetworkSettings.Ports)
+			w.DB[id].HostPort = resp.Container.NetworkSettings.Ports
+		}
+	}
 }
 
 type API struct {
